@@ -1,0 +1,17 @@
+node_modules/
+out/
+release/
+dist/
+*.log
+
+# 凭证与本地数据（切勿提交）
+.env
+.env.*
+!.env.example
+tokens.json
+**/wps-mail-data/
+mail-store.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
