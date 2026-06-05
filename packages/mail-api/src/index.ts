@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./client.js";
+export * from "./yundoc.js";
 
 export const SYSTEM_FOLDERS = [
   { id: "inbox", name: "收件箱" },
@@ -15,9 +16,12 @@ export const MAX_FOLDER_MESSAGES_PAGE_SIZE = 10;
 /** 搜索邮件 API 实测上限同为 10 */
 export const MAX_SEARCH_MESSAGES_PAGE_SIZE = 10;
 
+/** 邮件 + V1.3 云文档链接附件所需 scope（新增后需重新 OAuth 登录） */
 export const DEFAULT_MAIL_SCOPES = [
   "kso.user_base.read",
   "kso.mailbox.read",
-  "kso.mail.read",
   "kso.mail.readwrite",
+  "kso.drive.readwrite",
+  "kso.file.readwrite",
+  "kso.file_link.readwrite",
 ].join(",");

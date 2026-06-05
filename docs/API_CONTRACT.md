@@ -15,6 +15,7 @@
 | 搜索 | GET | `/v7/mail_messages/search` | `kso.mail.read` |
 | 创建草稿 | POST | `/v7/mailboxes/{id}/messages/create` | `kso.mail.readwrite` |
 | 发送 | POST | `/v7/mailboxes/{id}/messages/{msg}/send` | `kso.mail.readwrite` |
+| 附件上传 | — | 实测 `attachments/create` 等为 **404** | 客户端对 **图片** 改为 data URI 嵌入正文；其他类型请用 Web 邮箱 |
 | 附件 URL | GET | `/v7/mailboxes/{id}/messages/{msg}/attachments/{att}/download_url` | `kso.mail.read` |
 | 当前用户 | GET | `/v7/users/current` | `kso.user_base.read` |
 | 更新邮件 | POST | `/v7/mailboxes/{id}/folders/{folder}/messages/{msg}/update` | `kso.mail.readwrite` |

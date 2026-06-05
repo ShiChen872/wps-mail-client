@@ -5,6 +5,10 @@ import type { SyncService } from "./sync-service";
 import type { AppConfig } from "./config";
 import { isConfigValid } from "./config";
 import type { CreateDraftBody, MailRecipient } from "@wps-mail/mail-api";
+import { embedImagesInHtmlBody } from "./attachment-embed";
+import { uploadAttachmentsForMessage } from "./attachment-upload";
+import { createCloudLinksForFiles } from "./cloud-attachment-service";
+import path from "path";
 
 function rowToListItem(row: CachedMessageRow) {
   return {
@@ -207,6 +211,34 @@ export function registerIpcHandlers(
   );
 
   ipcMain.handle(
+    "mail:uploadCloudLinks",
+    async (_e, filePaths: string[]) => {
+      if (!filePaths?.length) {
+        return { items: [], errors: [] };
+      }
+      return createCloudLinksForFiles(
+        sync.api,
+        config,
+        filePaths,
+        () => auth.getAccessToken()
+      );
+    }
+  );
+
+  ipcMain.handle("mail:pickAttachments", async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      properties: ["openFile", "multiSelections"],
+    });
+    if (canceled || !filePaths?.length) {
+      return { canceled: true, files: [] as { path: string; name: string }[] };
+    }
+    return {
+      canceled: false,
+      files: filePaths.map((p) => ({ path: p, name: path.basename(p) })),
+    };
+  });
+
+  ipcMain.handle(
     "mail:send",
     async (
       _e,
@@ -214,9 +246,11 @@ export function registerIpcHandlers(
         mailboxId: string;
         subject: string;
         body: string;
+        isHtml?: boolean;
         to: string;
         cc?: string;
         bcc?: string;
+        attachmentPaths?: string[];
       }
     ) => {
       const parseRecipients = (raw: string): MailRecipient[] =>
@@ -226,9 +260,35 @@ export function registerIpcHandlers(
           .filter(Boolean)
           .map((email_address) => ({ email_address, name: email_address }));
 
+      let body = payload.body;
+      let isHtml = Boolean(payload.isHtml);
+      const allPaths = payload.attachmentPaths ?? [];
+      const notes: string[] = [];
+
+      let pathsToUpload: string[] = [];
+      if (allPaths.length > 0) {
+        const embedded = embedImagesInHtmlBody(body, isHtml, allPaths);
+        if (embedded.embedded.length > 0) {
+          body = embedded.body;
+          isHtml = true;
+          notes.push(
+            `以下图片已嵌入正文：${embedded.embedded.join("、")}（开放平台暂无附件上传接口）。`
+          );
+        }
+        pathsToUpload = embedded.remainingPaths;
+      }
+
+      if (config.mailSignature.trim()) {
+        const sig = config.mailSignature.trim();
+        body = isHtml
+          ? `${body}<br><br>--<br>${sig}`
+          : `${body}\n\n--\n${sig}`;
+      }
+
       const bodyReq: CreateDraftBody = {
         subject: payload.subject,
-        body: payload.body,
+        body,
+        body_version: isHtml ? "v2" : "v1",
         to_recipients: parseRecipients(payload.to),
         cc_recipients: payload.cc ? parseRecipients(payload.cc) : undefined,
         bcc_recipients: payload.bcc ? parseRecipients(payload.bcc) : undefined,
@@ -238,8 +298,35 @@ export function registerIpcHandlers(
         payload.mailboxId,
         bodyReq
       );
+
+      let attachmentWarning: string | undefined;
+      if (pathsToUpload.length > 0) {
+        const { uploaded, failed } = await uploadAttachmentsForMessage(
+          sync.api,
+          config,
+          payload.mailboxId,
+          message_id,
+          pathsToUpload,
+          () => auth.getAccessToken()
+        );
+        if (failed.length > 0) {
+          const hint =
+            "WPS OpenAPI 当前未提供邮件附件上传接口。请使用工具栏「在浏览器中打开」到 Web 邮箱添加 PDF/Word 等附件。";
+          if (uploaded === 0) {
+            throw new Error(
+              `以下附件无法随信发送：${failed.join("、")}。${hint}` +
+                (notes.length ? `\n\n${notes.join("\n")}` : "")
+            );
+          }
+          notes.push(`以下附件未能上传：${failed.join("、")}。${hint}`);
+        }
+      }
+
       await sync.api.sendDraft(payload.mailboxId, message_id);
-      return { ok: true, message_id };
+      if (notes.length) {
+        attachmentWarning = notes.join("\n");
+      }
+      return { ok: true, message_id, attachmentWarning };
     }
   );
 

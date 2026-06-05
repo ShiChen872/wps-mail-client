@@ -248,6 +248,77 @@ textarea {
   z-index: 100;
 }
 
+.compose-panel-wide {
+  width: 720px;
+}
+
+.compose-format-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.compose-format-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.compose-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.compose-attachments {
+  margin: 0;
+  padding: 0 0 0 18px;
+  font-size: 13px;
+}
+
+.compose-attachments li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.rich-editor {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.rich-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: #fafafa;
+}
+
+.rich-toolbar .btn {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.rich-body {
+  padding: 10px 12px;
+  outline: none;
+  overflow-y: auto;
+  max-height: 280px;
+}
+
+.rich-body:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+}
+
 .compose-panel {
   width: 640px;
   max-height: 90vh;

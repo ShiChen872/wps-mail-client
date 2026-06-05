@@ -76,9 +76,18 @@ export interface Paginated<T> {
 export interface CreateDraftBody {
   subject?: string;
   body?: string;
+  /** 邮件体版本，HTML 正文建议 v2（若 API 支持） */
+  body_version?: "v1" | "v2";
   to_recipients?: MailRecipient[];
   cc_recipients?: MailRecipient[];
   bcc_recipients?: MailRecipient[];
+}
+
+export interface UploadAttachmentInput {
+  filename: string;
+  mime_type: string;
+  /** 文件二进制 */
+  content_base64: string;
 }
 
 export interface UpdateMessageBody {

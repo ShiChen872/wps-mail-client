@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
 import type { ComposeDraft } from "../lib/compose";
+import { looksLikeHtml, normalizeComposeBody, plainTextToHtml } from "../lib/html";
+import { RichTextEditor } from "./RichTextEditor";
+
+interface AttachmentItem {
+  path: string;
+  name: string;
+}
 
 interface Props {
   mailboxId: string;
@@ -20,8 +27,15 @@ export function ComposeModal({
   const [cc, setCc] = useState(initial?.cc ?? "");
   const [bcc, setBcc] = useState(initial?.bcc ?? "");
   const [subject, setSubject] = useState(initial?.subject ?? "");
-  const [body, setBody] = useState(initial?.body ?? "");
+  const [bodyHtml, setBodyHtml] = useState(() => {
+    const b = initial?.body ?? "";
+    return looksLikeHtml(b) ? b : plainTextToHtml(b);
+  });
+  const [plainBody, setPlainBody] = useState(initial?.body ?? "");
+  const [useRichText, setUseRichText] = useState(true);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [sending, setSending] = useState(false);
+  const [cloudBusy, setCloudBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showBcc, setShowBcc] = useState(Boolean(initial?.bcc));
 
@@ -31,10 +45,54 @@ export function ComposeModal({
       setCc(initial.cc);
       setBcc(initial.bcc);
       setSubject(initial.subject);
-      setBody(initial.body);
+      const b = initial.body;
+      setPlainBody(b);
+      setBodyHtml(looksLikeHtml(b) ? b : plainTextToHtml(b));
       setShowBcc(Boolean(initial.bcc));
     }
   }, [initial]);
+
+  const handlePickAttachments = async () => {
+    const res = await window.wpsMail.pickAttachments();
+    if (res.canceled || !res.files.length) return;
+    setAttachments((prev) => {
+      const seen = new Set(prev.map((a) => a.path));
+      const add = res.files.filter((f) => !seen.has(f.path));
+      return [...prev, ...add];
+    });
+  };
+
+  /** V1.3：上传至云文档并插入分享链接（类 OWA OneDrive 链接附件） */
+  const handleCloudLinkAttachments = async () => {
+    const res = await window.wpsMail.pickAttachments();
+    if (res.canceled || !res.files.length) return;
+    setCloudBusy(true);
+    setError(null);
+    try {
+      const uploaded = await window.wpsMail.uploadCloudLinks(
+        res.files.map((f) => f.path)
+      );
+      if (uploaded.items.length > 0) {
+        setUseRichText(true);
+        const block = uploaded.items.map((i) => i.html).join("");
+        setBodyHtml((prev) => `${prev}${block}`);
+      }
+      if (uploaded.errors.length > 0) {
+        const msg = uploaded.errors
+          .map((e) => `${e.name}: ${e.message}`)
+          .join("\n");
+        setError(
+          uploaded.items.length > 0
+            ? `部分文件未生成云链接：\n${msg}\n请确认开放平台已开通云文档 scope 并重新登录。`
+            : `云文档链接失败：\n${msg}\n请确认已开通 kso.drive/file/file_link 权限并重新 OAuth 登录。`
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCloudBusy(false);
+    }
+  };
 
   const handleSend = async () => {
     if (!to.trim()) {
@@ -44,14 +102,22 @@ export function ComposeModal({
     setSending(true);
     setError(null);
     try {
-      await window.wpsMail.send({
+      const body = useRichText
+        ? normalizeComposeBody(bodyHtml, true)
+        : normalizeComposeBody(plainBody, false);
+      const res = await window.wpsMail.send({
         mailboxId,
         to: to.trim(),
         cc: cc.trim() || undefined,
         bcc: bcc.trim() || undefined,
         subject,
         body,
+        isHtml: useRichText,
+        attachmentPaths: attachments.map((a) => a.path),
       });
+      if (res.attachmentWarning) {
+        window.alert(res.attachmentWarning);
+      }
       onSent();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -62,7 +128,7 @@ export function ComposeModal({
 
   return (
     <div className="compose-overlay" role="dialog" aria-modal="true">
-      <div className="compose-panel">
+      <div className="compose-panel compose-panel-wide">
         <header>{initial?.title ?? "新邮件"}</header>
         <div className="compose-fields">
           <input
@@ -105,11 +171,65 @@ export function ComposeModal({
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
           />
-          <textarea
-            placeholder="正文"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-          />
+          <div className="compose-format-row">
+            <label>
+              <input
+                type="checkbox"
+                checked={useRichText}
+                onChange={(e) => setUseRichText(e.target.checked)}
+              />
+              富文本格式
+            </label>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void handlePickAttachments()}
+              disabled={sending || cloudBusy}
+            >
+              嵌入图片
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void handleCloudLinkAttachments()}
+              disabled={sending || cloudBusy}
+            >
+              {cloudBusy ? "上传中…" : "云文档链接"}
+            </button>
+          </div>
+          <p className="compose-hint">
+            <strong>云文档链接</strong>（推荐，类 OWA OneDrive）：大文件上传至「我的云文档 →
+            WPS Mail/附件」并插入分享链。<strong>嵌入图片</strong>：小图（≤2MB）直接进正文。
+          </p>
+          {attachments.length > 0 && (
+            <ul className="compose-attachments">
+              {attachments.map((a) => (
+                <li key={a.path}>
+                  <span>{a.name}</span>
+                  <button
+                    type="button"
+                    className="btn-link"
+                    onClick={() =>
+                      setAttachments((prev) =>
+                        prev.filter((x) => x.path !== a.path)
+                      )
+                    }
+                  >
+                    移除
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {useRichText ? (
+            <RichTextEditor value={bodyHtml} onChange={setBodyHtml} />
+          ) : (
+            <textarea
+              placeholder="正文"
+              value={plainBody}
+              onChange={(e) => setPlainBody(e.target.value)}
+            />
+          )}
           {error && <p style={{ color: "#cf1322", margin: 0 }}>{error}</p>}
         </div>
         <div className="compose-actions">
@@ -120,7 +240,7 @@ export function ComposeModal({
             type="button"
             className="btn btn-primary"
             onClick={() => void handleSend()}
-            disabled={sending}
+            disabled={sending || cloudBusy}
           >
             {sending ? "发送中…" : "发送"}
           </button>

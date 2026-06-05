@@ -12,6 +12,7 @@ import type {
   UpdateMessageBody,
   WpsApiResponse,
 } from "./types.js";
+import { WpsYundocApi } from "./yundoc.js";
 
 /** 文件夹邮件列表 API 实测上限为 10 */
 const MAX_FOLDER_MESSAGES_PAGE_SIZE = 10;
@@ -71,6 +72,11 @@ export class WpsMailApiClient {
     }
 
     return json;
+  }
+
+  /** 云文档 API（上传、分享链接） */
+  get yundoc(): WpsYundocApi {
+    return new WpsYundocApi((path, init) => this.request(path, init));
   }
 
   async listMailboxes(pageSize = 20, pageToken?: string) {
@@ -167,6 +173,73 @@ export class WpsMailApiClient {
     await this.request<Record<string, never>>(
       `/v7/mailboxes/${encodeURIComponent(mailboxId)}/messages/${encodeURIComponent(messageId)}/send`,
       { method: "POST", body: JSON.stringify({}) }
+    );
+  }
+
+  /**
+   * 为草稿邮件上传附件（创建草稿后调用）。
+   * 官方 scrape 文档仅含 download_url；此处按常见 REST 约定依次尝试。
+   */
+  async uploadMessageAttachment(
+    mailboxId: string,
+    messageId: string,
+    file: { filename: string; mimeType: string; data: Buffer }
+  ): Promise<void> {
+    const b64 = file.data.toString("base64");
+    const base = `/v7/mailboxes/${encodeURIComponent(mailboxId)}/messages/${encodeURIComponent(messageId)}`;
+    const jsonAttempts: Array<{ path: string; body: Record<string, string> }> = [
+      {
+        path: `${base}/attachments/create`,
+        body: {
+          filename: file.filename,
+          mime_type: file.mimeType,
+          content: b64,
+        },
+      },
+      {
+        path: `${base}/attachments/create`,
+        body: {
+          filename: file.filename,
+          mime_type: file.mimeType,
+          content_base64: b64,
+        },
+      },
+      {
+        path: `${base}/attachments/upload`,
+        body: {
+          filename: file.filename,
+          mime_type: file.mimeType,
+          file: b64,
+        },
+      },
+      {
+        path: `${base}/attachments`,
+        body: {
+          filename: file.filename,
+          mime_type: file.mimeType,
+          content_base64: b64,
+        },
+      },
+    ];
+
+    let lastError: Error | null = null;
+    for (const { path, body } of jsonAttempts) {
+      try {
+        await this.request<{ part_id?: string; attachment_id?: string }>(path, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        return;
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
+      }
+    }
+
+    throw (
+      lastError ??
+      new Error(
+        "附件上传失败：开放平台未返回成功。请在 API Explorer 确认邮件附件上传接口，或暂用 Web 邮箱发送附件。"
+      )
     );
   }
 

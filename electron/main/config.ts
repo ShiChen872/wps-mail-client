@@ -13,6 +13,14 @@ export interface AppConfig {
   oauthTokenUrl: string;
   /** WPS 365 Web 邮箱地址，用于「在浏览器中打开」 */
   webMailUrl: string;
+  /** 写信时追加的签名（纯文本/HTML 片段，可选） */
+  mailSignature: string;
+  /** 云文档分享链接权限范围：company | anyone */
+  cloudLinkScope: "company" | "anyone";
+  /** 云文档分享角色 ID（公网常用 viewable / view_only，见开放平台权限角色列表） */
+  cloudLinkRoleId: string;
+  /** 分享链接有效期天数：0=永久，7，30 */
+  cloudLinkExpireDays: number;
 }
 
 function env(key: string, fallback = ""): string {
@@ -46,12 +54,19 @@ export function loadConfig(): AppConfig {
     redirectUri,
     oauthScopes: env(
       "WPS_OAUTH_SCOPES",
-      "kso.user_base.read,kso.mailbox.read,kso.mail.readwrite"
+      "kso.user_base.read,kso.mailbox.read,kso.mail.readwrite,kso.drive.readwrite,kso.file.readwrite,kso.file_link.readwrite"
     ),
     apiBase: env("WPS_API_BASE", "https://openapi.wps.cn"),
     oauthAuthUrl: env("WPS_OAUTH_AUTH_URL", "https://openapi.wps.cn/oauth2/auth"),
     oauthTokenUrl: env("WPS_OAUTH_TOKEN_URL", "https://openapi.wps.cn/oauth2/token"),
     webMailUrl: env("WPS_WEB_MAIL_URL", "https://mail.wps.cn"),
+    mailSignature: env("WPS_MAIL_SIGNATURE", ""),
+    cloudLinkScope:
+      env("WPS_CLOUD_LINK_SCOPE", "company") === "anyone"
+        ? "anyone"
+        : "company",
+    cloudLinkRoleId: env("WPS_CLOUD_LINK_ROLE_ID", "viewable"),
+    cloudLinkExpireDays: Number(env("WPS_CLOUD_LINK_EXPIRE_DAYS", "0")) || 0,
   };
 }
 

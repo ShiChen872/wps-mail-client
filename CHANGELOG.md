@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.3.0] — 2026-06-04
+
+### 新增
+
+- **云文档链接附件**（类 OWA OneDrive）：上传至「我的云文档 / WPS Mail / 附件」→ 开启分享 → 自动插入正文链接
+- 写信按钮：**云文档链接** / **嵌入图片** 分工
+- 云文档 API 封装（`packages/mail-api/src/yundoc.ts`）
+
+### 配置
+
+- 默认 OAuth scope 增加 `kso.drive.readwrite`、`kso.file.readwrite`、`kso.file_link.readwrite`（**需重新登录**）
+- 可选：`WPS_CLOUD_LINK_SCOPE`、`WPS_CLOUD_LINK_ROLE_ID`、`WPS_CLOUD_LINK_EXPIRE_DAYS`
+
+详见 [docs/V1.3.md](docs/V1.3.md)。
+
+## [1.2.0] — 2026-06-04
+
+### 新增（P0）
+
+- **富文本写信**：加粗/斜体/下划线/列表/链接，HTML 正文（`body_version: v2`）
+- **附件上传发送**：创建草稿后上传附件再发送（多路径 API 尝试 + multipart 兜底）
+- **可选纯文本模式**：写信面板可切换
+- **签名**：`.env` 中 `WPS_MAIL_SIGNATURE` 自动追加到正文
+
+### 说明
+
+- 邮件附件上传接口未在 scrape 文档中；若上传失败会提示使用 Web 邮箱或在 API Explorer 确认路径。
+
 ## [1.1.0] — 2026-06-01
 
 ### 新增

@@ -39,14 +39,28 @@ export interface WpsMailApi {
     body?: string;
     pageToken?: string;
   }) => Promise<{ items: unknown[]; next_page_token?: string }>;
+  pickAttachments: () => Promise<{
+    canceled: boolean;
+    files: { path: string; name: string }[];
+  }>;
+  uploadCloudLinks: (filePaths: string[]) => Promise<{
+    items: { name: string; url: string; html: string }[];
+    errors: { name: string; message: string }[];
+  }>;
   send: (payload: {
     mailboxId: string;
     subject: string;
     body: string;
+    isHtml?: boolean;
     to: string;
     cc?: string;
     bcc?: string;
-  }) => Promise<{ ok: boolean; message_id: string }>;
+    attachmentPaths?: string[];
+  }) => Promise<{
+    ok: boolean;
+    message_id: string;
+    attachmentWarning?: string;
+  }>;
   updateMessage: (payload: {
     mailboxId: string;
     folderId: string;
@@ -88,6 +102,9 @@ const api: WpsMailApi = {
   listMessages: (payload) => ipcRenderer.invoke("mail:listMessages", payload),
   getMessage: (payload) => ipcRenderer.invoke("mail:getMessage", payload),
   search: (payload) => ipcRenderer.invoke("mail:search", payload),
+  pickAttachments: () => ipcRenderer.invoke("mail:pickAttachments"),
+  uploadCloudLinks: (filePaths) =>
+    ipcRenderer.invoke("mail:uploadCloudLinks", filePaths),
   send: (payload) => ipcRenderer.invoke("mail:send", payload),
   updateMessage: (payload) =>
     ipcRenderer.invoke("mail:updateMessage", payload),
