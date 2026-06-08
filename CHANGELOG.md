@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.3.1] — 2026-06-08
+
+### 云文档链接（V1.3 修正）
+
+- **从已有云文档选择**（最近 / 我的云文档 / 搜索），对齐 [365.kdocs.cn/latest](https://365.kdocs.cn/latest)，不再走本地上传
+- 云文档 API：`drive_latest/items`、文件夹浏览、文件搜索
+- 写信「云文档链接」打开选择器弹窗
+
+### 读信体验
+
+- 新增 `MailBodyReader`：正文链接可点击，用系统浏览器打开
+- 云文档分享链、纯文本 URL 自动识别；正文下方「打开链接」快捷按钮
+- 修复点击邮件后仍显示未读（列表样式 + 收件箱角标同步更新）
+
+### 系统邮件 / 隔离审批
+
+- 识别 WPS 隔离审批通知（`data-protact-rule-button`）
+- Web 邮箱页面：`https://365.kdocs.cn/email/`；后端 API：`https://email.wps.cn`
+- 审批按钮快捷入口 + 打开 365 邮箱引导
+
+### 配置
+
+- `WPS_WEB_MAIL_URL` 默认改为 `https://365.kdocs.cn/email/`
+- 新增 `WPS_WEB_MAIL_API_BASE`（默认 `https://email.wps.cn`）
+- OAuth scope 配置防呆（修正重复 `WPS_OAUTH_SCOPES=` 前缀）
+
 ## [1.3.0] — 2026-06-04
 
 ### 新增

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ComposeDraft } from "../lib/compose";
 import { looksLikeHtml, normalizeComposeBody, plainTextToHtml } from "../lib/html";
 import { RichTextEditor } from "./RichTextEditor";
+import { CloudDocPickerModal, type CloudDocItem } from "./CloudDocPickerModal";
 
 interface AttachmentItem {
   path: string;
@@ -36,6 +37,7 @@ export function ComposeModal({
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [sending, setSending] = useState(false);
   const [cloudBusy, setCloudBusy] = useState(false);
+  const [showCloudPicker, setShowCloudPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showBcc, setShowBcc] = useState(Boolean(initial?.bcc));
 
@@ -62,33 +64,33 @@ export function ComposeModal({
     });
   };
 
-  /** V1.3：上传至云文档并插入分享链接（类 OWA OneDrive 链接附件） */
-  const handleCloudLinkAttachments = async () => {
-    const res = await window.wpsMail.pickAttachments();
-    if (res.canceled || !res.files.length) return;
+  const insertCloudLinks = async (picked: CloudDocItem[]) => {
     setCloudBusy(true);
     setError(null);
     try {
-      const uploaded = await window.wpsMail.uploadCloudLinks(
-        res.files.map((f) => f.path)
+      const result = await window.wpsMail.createCloudLinks(
+        picked.map((f) => ({
+          driveId: f.driveId,
+          fileId: f.fileId,
+          name: f.name,
+          linkUrl: f.linkUrl,
+        }))
       );
-      if (uploaded.items.length > 0) {
+      if (result.items.length > 0) {
         setUseRichText(true);
-        const block = uploaded.items.map((i) => i.html).join("");
+        const block = result.items.map((i) => i.html).join("");
         setBodyHtml((prev) => `${prev}${block}`);
       }
-      if (uploaded.errors.length > 0) {
-        const msg = uploaded.errors
+      if (result.errors.length > 0) {
+        const msg = result.errors
           .map((e) => `${e.name}: ${e.message}`)
           .join("\n");
         setError(
-          uploaded.items.length > 0
-            ? `部分文件未生成云链接：\n${msg}\n请确认开放平台已开通云文档 scope 并重新登录。`
+          result.items.length > 0
+            ? `部分文件未生成云链接：\n${msg}`
             : `云文档链接失败：\n${msg}\n请确认已开通 kso.drive/file/file_link 权限并重新 OAuth 登录。`
         );
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setCloudBusy(false);
     }
@@ -191,15 +193,15 @@ export function ComposeModal({
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => void handleCloudLinkAttachments()}
+              onClick={() => setShowCloudPicker(true)}
               disabled={sending || cloudBusy}
             >
-              {cloudBusy ? "上传中…" : "云文档链接"}
+              {cloudBusy ? "处理中…" : "云文档链接"}
             </button>
           </div>
           <p className="compose-hint">
-            <strong>云文档链接</strong>（推荐，类 OWA OneDrive）：大文件上传至「我的云文档 →
-            WPS Mail/附件」并插入分享链。<strong>嵌入图片</strong>：小图（≤2MB）直接进正文。
+            <strong>云文档链接</strong>：从 WPS 云文档（最近/文件夹）选择已有文件并插入分享链，类
+            OWA OneDrive。<strong>嵌入图片</strong>：小图（≤2MB）从本机选图嵌入正文。
           </p>
           {attachments.length > 0 && (
             <ul className="compose-attachments">
@@ -246,6 +248,12 @@ export function ComposeModal({
           </button>
         </div>
       </div>
+      {showCloudPicker && (
+        <CloudDocPickerModal
+          onClose={() => setShowCloudPicker(false)}
+          onConfirm={insertCloudLinks}
+        />
+      )}
     </div>
   );
 }

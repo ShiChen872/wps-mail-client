@@ -94,6 +94,9 @@ export class MailDatabase {
     for (const m of items) {
       const key = msgKey(m.mailbox_id, m.message_id);
       const apiFolderId = m.folder_id?.trim() || syncFolder;
+      const prev = this.data.messages[key];
+      // 本地已读不被 API 同步回写覆盖（打开邮件后服务端可能尚未更新 is_read）
+      const isRead = m.is_read || prev?.is_read ? 1 : 0;
       this.data.messages[key] = {
         message_id: m.message_id,
         mailbox_id: m.mailbox_id,
@@ -104,7 +107,7 @@ export class MailDatabase {
         ctime: m.ctime ?? 0,
         from_json: m.from ? JSON.stringify(m.from) : null,
         to_json: m.to_recipient ? JSON.stringify(m.to_recipient) : null,
-        is_read: m.is_read ? 1 : 0,
+        is_read: isRead,
         is_flag: m.is_flag ? 1 : 0,
         is_draft: m.is_draft ? 1 : 0,
         has_attachments: m.has_attachments ? 1 : 0,

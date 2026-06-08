@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { SYSTEM_FOLDERS } from "./types";
 import { ComposeModal } from "./components/ComposeModal";
+import { MailBodyReader } from "./components/MailBodyReader";
 
 function formatTime(ts: number): string {
   if (!ts) return "";
@@ -183,27 +184,48 @@ export default function App() {
     [mailboxId, folderId, searchMode, searchQ, searchSubject, searchFrom, searchBody]
   );
 
-  const loadDetail = useCallback(async (m: MailListItem) => {
-    setSelectedId(m.message_id);
-    setDetail(null);
-    try {
-      const d = (await window.wpsMail.getMessage({
-        mailboxId: m.mailbox_id,
-        folderId: m.folder_id,
-        messageId: m.message_id,
-      })) as MailDetail;
-      setDetail(d);
-      if (!d.is_read) {
+  const decrementFolderUnread = useCallback((syncFolderId: string) => {
+    setFolderUnread((prev) => ({
+      ...prev,
+      [syncFolderId]: Math.max(0, (prev[syncFolderId] ?? 0) - 1),
+    }));
+    if (syncFolderId === "inbox") {
+      setInboxUnread((n) => Math.max(0, n - 1));
+    }
+  }, []);
+
+  const loadDetail = useCallback(
+    async (m: MailListItem) => {
+      setSelectedId(m.message_id);
+      setDetail(null);
+      if (!m.is_read) {
         setMessages((prev) =>
           prev.map((row) =>
             row.message_id === m.message_id ? { ...row, is_read: true } : row
           )
         );
+        if (!searchMode) {
+          decrementFolderUnread(folderId);
+        }
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
+      try {
+        const d = (await window.wpsMail.getMessage({
+          mailboxId: m.mailbox_id,
+          folderId: m.folder_id,
+          messageId: m.message_id,
+        })) as MailDetail;
+        setDetail({ ...d, is_read: true });
+        setMessages((prev) =>
+          prev.map((row) =>
+            row.message_id === m.message_id ? { ...row, is_read: true } : row
+          )
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [decrementFolderUnread, folderId, searchMode]
+  );
 
   useEffect(() => {
     void refreshAuth();
@@ -229,10 +251,10 @@ export default function App() {
   useEffect(() => {
     const unsub = window.wpsMail.onUnreadChanged((count) => {
       setInboxUnread(count);
-      void loadMessages({ refresh: true });
+      setFolderUnread((prev) => ({ ...prev, inbox: count }));
     });
     return unsub;
-  }, [loadMessages]);
+  }, []);
 
   const handleLogin = async () => {
     setError(null);
@@ -352,6 +374,18 @@ export default function App() {
           )
         );
         setDetail((d) => (d ? { ...d, is_read: isRead } : d));
+        const syncFolder = searchMode ? selected.folder_id : folderId;
+        if (isRead) {
+          decrementFolderUnread(syncFolder);
+        } else {
+          setFolderUnread((prev) => ({
+            ...prev,
+            [syncFolder]: (prev[syncFolder] ?? 0) + 1,
+          }));
+          if (syncFolder === "inbox") {
+            setInboxUnread((n) => n + 1);
+          }
+        }
       }
     );
   };
@@ -707,13 +741,7 @@ export default function App() {
                 </div>
               )}
               <div className="reader-body">
-                {bodyHtml.includes("<") ? (
-                  <iframe title="邮件正文" sandbox="" srcDoc={bodyHtml} />
-                ) : (
-                  <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>
-                    {bodyHtml}
-                  </pre>
-                )}
+                <MailBodyReader body={bodyHtml} />
               </div>
             </>
           )}

@@ -7,7 +7,11 @@ import { isConfigValid } from "./config";
 import type { CreateDraftBody, MailRecipient } from "@wps-mail/mail-api";
 import { embedImagesInHtmlBody } from "./attachment-embed";
 import { uploadAttachmentsForMessage } from "./attachment-upload";
-import { createCloudLinksForFiles } from "./cloud-attachment-service";
+import {
+  createCloudLinksForSelections,
+  type CloudDocSelection,
+} from "./cloud-attachment-service";
+import { executeQuarantineAction } from "./quarantine-audit-service";
 import path from "path";
 
 function rowToListItem(row: CachedMessageRow) {
@@ -40,6 +44,7 @@ export function registerIpcHandlers(
     redirectUri: config.redirectUri,
     apiBase: config.apiBase,
     webMailUrl: config.webMailUrl,
+    cloudDocUrl: config.cloudDocUrl,
   }));
 
   ipcMain.handle("auth:status", async () => {
@@ -160,10 +165,7 @@ export function registerIpcHandlers(
       if (detail.body) {
         db.cacheMessageBody(payload.mailboxId, payload.messageId, detail.body);
       }
-      if (
-        detail.is_read === false &&
-        (row?.sync_folder === "inbox" || payload.folderId === "inbox")
-      ) {
+      if (detail.is_read === false) {
         try {
           await sync.api.updateMessage(
             payload.mailboxId,
@@ -175,9 +177,11 @@ export function registerIpcHandlers(
           /* 本地标记已读 */
         }
         db.setMessageRead(payload.mailboxId, payload.messageId, true);
-        onUnreadChange(db.countUnreadInbox(payload.mailboxId));
+        if (row?.sync_folder === "inbox") {
+          onUnreadChange(db.countUnreadInbox(payload.mailboxId));
+        }
       }
-      return detail;
+      return { ...detail, is_read: true };
     }
   );
 
@@ -210,20 +214,110 @@ export function registerIpcHandlers(
     }
   );
 
-  ipcMain.handle(
-    "mail:uploadCloudLinks",
-    async (_e, filePaths: string[]) => {
-      if (!filePaths?.length) {
-        return { items: [], errors: [] };
-      }
-      return createCloudLinksForFiles(
-        sync.api,
-        config,
-        filePaths,
-        () => auth.getAccessToken()
+  ipcMain.handle("mail:getCloudDriveRoot", async () => {
+    const drives = await sync.api.yundoc.listUserDrives("special");
+    const drive = drives.items?.[0];
+    if (!drive?.id) {
+      throw new Error(
+        "未找到「我的云文档」。请确认已开通 kso.drive.readwrite 并重新登录。"
       );
     }
+    const data = await sync.api.yundoc.listFolderChildren(drive.id, "0");
+    return {
+      driveId: drive.id,
+      driveName: drive.name,
+      items: data.items.map((f) => ({
+        driveId: f.drive_id,
+        fileId: f.id,
+        name: f.name,
+        type: f.type,
+        linkUrl: f.link_url,
+        mtime: f.mtime,
+      })),
+      next_page_token: data.next_page_token,
+    };
+  });
+
+  ipcMain.handle(
+    "mail:listCloudLatest",
+    async (_e, payload?: { pageToken?: string }) => {
+      const data = await sync.api.yundoc.listLatestItems(30, payload?.pageToken);
+      return {
+        items: data.items.map((f) => ({
+          driveId: f.drive_id,
+          fileId: f.id,
+          name: f.name,
+          type: f.type,
+          linkUrl: f.link_url,
+          mtime: f.mtime,
+        })),
+        next_page_token: data.next_page_token,
+      };
+    }
   );
+
+  ipcMain.handle(
+    "mail:listCloudFolder",
+    async (
+      _e,
+      payload: { driveId: string; parentId: string; pageToken?: string }
+    ) => {
+      const data = await sync.api.yundoc.listFolderChildren(
+        payload.driveId,
+        payload.parentId,
+        { pageToken: payload.pageToken }
+      );
+      return {
+        items: data.items.map((f) => ({
+          driveId: f.drive_id,
+          fileId: f.id,
+          name: f.name,
+          type: f.type,
+          linkUrl: f.link_url,
+          mtime: f.mtime,
+        })),
+        next_page_token: data.next_page_token,
+      };
+    }
+  );
+
+  ipcMain.handle(
+    "mail:searchCloudDocs",
+    async (_e, payload: { keyword: string; pageToken?: string }) => {
+      const keyword = payload.keyword?.trim();
+      if (!keyword) return { items: [], next_page_token: undefined };
+      const data = await sync.api.yundoc.searchFiles(
+        keyword,
+        30,
+        payload.pageToken
+      );
+      return {
+        items: data.items.map((f) => ({
+          driveId: f.drive_id,
+          fileId: f.id,
+          name: f.name,
+          type: f.type,
+          linkUrl: f.link_url,
+          mtime: f.mtime,
+        })),
+        next_page_token: data.next_page_token,
+      };
+    }
+  );
+
+  ipcMain.handle(
+    "mail:createCloudLinks",
+    async (_e, selections: CloudDocSelection[]) => {
+      if (!selections?.length) {
+        return { items: [], errors: [] };
+      }
+      return createCloudLinksForSelections(sync.api, config, selections);
+    }
+  );
+
+  ipcMain.handle("mail:openCloudDoc", () => {
+    shell.openExternal(config.cloudDocUrl);
+  });
 
   ipcMain.handle("mail:pickAttachments", async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog({
@@ -370,7 +464,10 @@ export function registerIpcHandlers(
           payload.isRead
         );
       }
-      if (payload.mailboxId && payload.folderId === "inbox") {
+      if (
+        payload.isRead !== undefined &&
+        row?.sync_folder === "inbox"
+      ) {
         onUnreadChange(db.countUnreadInbox(payload.mailboxId));
       }
       return { ok: true, apiOk };
@@ -497,8 +594,28 @@ export function registerIpcHandlers(
     }
   );
 
-  ipcMain.handle("mail:openExternal", (_e, url: string) => {
-    shell.openExternal(url);
+  ipcMain.handle(
+    "mail:executeQuarantineAction",
+    async (
+      _e,
+      payload: {
+        action: "pass" | "reject" | "detail";
+        ruleId: string;
+        isolateId?: string;
+        apiPath?: string;
+        detailPath?: string;
+      }
+    ) => {
+      return executeQuarantineAction(config, () => auth.getAccessToken(), payload);
+    }
+  );
+
+  ipcMain.handle("mail:openExternal", async (_e, url: string) => {
+    const href = String(url ?? "").trim();
+    if (!/^https?:\/\//i.test(href)) {
+      throw new Error("仅支持 http/https 链接");
+    }
+    await shell.openExternal(href);
   });
 
   ipcMain.handle(

@@ -6,6 +6,7 @@ export interface WpsMailApi {
     redirectUri: string;
     apiBase: string;
     webMailUrl: string;
+    cloudDocUrl: string;
   }>;
   authStatus: () => Promise<{
     loggedIn: boolean;
@@ -43,10 +44,71 @@ export interface WpsMailApi {
     canceled: boolean;
     files: { path: string; name: string }[];
   }>;
-  uploadCloudLinks: (filePaths: string[]) => Promise<{
+  getCloudDriveRoot: () => Promise<{
+    driveId: string;
+    driveName: string;
+    items: {
+      driveId: string;
+      fileId: string;
+      name: string;
+      type: string;
+      linkUrl?: string;
+      mtime?: number;
+    }[];
+    next_page_token?: string;
+  }>;
+  listCloudLatest: (payload?: { pageToken?: string }) => Promise<{
+    items: {
+      driveId: string;
+      fileId: string;
+      name: string;
+      type: string;
+      linkUrl?: string;
+      mtime?: number;
+    }[];
+    next_page_token?: string;
+  }>;
+  listCloudFolder: (payload: {
+    driveId: string;
+    parentId: string;
+    pageToken?: string;
+  }) => Promise<{
+    items: {
+      driveId: string;
+      fileId: string;
+      name: string;
+      type: string;
+      linkUrl?: string;
+      mtime?: number;
+    }[];
+    next_page_token?: string;
+  }>;
+  searchCloudDocs: (payload: {
+    keyword: string;
+    pageToken?: string;
+  }) => Promise<{
+    items: {
+      driveId: string;
+      fileId: string;
+      name: string;
+      type: string;
+      linkUrl?: string;
+      mtime?: number;
+    }[];
+    next_page_token?: string;
+  }>;
+  createCloudLinks: (
+    selections: {
+      driveId: string;
+      fileId: string;
+      name: string;
+      linkUrl?: string;
+    }[]
+  ) => Promise<{
     items: { name: string; url: string; html: string }[];
     errors: { name: string; message: string }[];
   }>;
+  openCloudDoc: () => Promise<void>;
   send: (payload: {
     mailboxId: string;
     subject: string;
@@ -87,6 +149,13 @@ export interface WpsMailApi {
     filename: string;
   }) => Promise<{ canceled: boolean; filePath?: string }>;
   openExternal: (url: string) => Promise<void>;
+  executeQuarantineAction: (payload: {
+    action: "pass" | "reject" | "detail";
+    ruleId: string;
+    isolateId?: string;
+    apiPath?: string;
+    detailPath?: string;
+  }) => Promise<{ ok: boolean; message: string; needsWebMail?: boolean }>;
   openWebMail: () => Promise<void>;
   pollInbox: (mailboxId: string) => Promise<{ unread: number }>;
   onUnreadChanged: (cb: (count: number) => void) => () => void;
@@ -103,8 +172,16 @@ const api: WpsMailApi = {
   getMessage: (payload) => ipcRenderer.invoke("mail:getMessage", payload),
   search: (payload) => ipcRenderer.invoke("mail:search", payload),
   pickAttachments: () => ipcRenderer.invoke("mail:pickAttachments"),
-  uploadCloudLinks: (filePaths) =>
-    ipcRenderer.invoke("mail:uploadCloudLinks", filePaths),
+  getCloudDriveRoot: () => ipcRenderer.invoke("mail:getCloudDriveRoot"),
+  listCloudLatest: (payload) =>
+    ipcRenderer.invoke("mail:listCloudLatest", payload),
+  listCloudFolder: (payload) =>
+    ipcRenderer.invoke("mail:listCloudFolder", payload),
+  searchCloudDocs: (payload) =>
+    ipcRenderer.invoke("mail:searchCloudDocs", payload),
+  createCloudLinks: (selections) =>
+    ipcRenderer.invoke("mail:createCloudLinks", selections),
+  openCloudDoc: () => ipcRenderer.invoke("mail:openCloudDoc"),
   send: (payload) => ipcRenderer.invoke("mail:send", payload),
   updateMessage: (payload) =>
     ipcRenderer.invoke("mail:updateMessage", payload),
@@ -116,6 +193,8 @@ const api: WpsMailApi = {
   downloadAttachment: (payload) =>
     ipcRenderer.invoke("mail:downloadAttachment", payload),
   openExternal: (url) => ipcRenderer.invoke("mail:openExternal", url),
+  executeQuarantineAction: (payload) =>
+    ipcRenderer.invoke("mail:executeQuarantineAction", payload),
   openWebMail: () => ipcRenderer.invoke("mail:openWebMail"),
   pollInbox: (mailboxId) => ipcRenderer.invoke("mail:pollInbox", mailboxId),
   onUnreadChanged: (cb) => {

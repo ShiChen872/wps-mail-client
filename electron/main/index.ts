@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, shell } from "electron";
 import path from "path";
 import { loadConfig, loadEnvFiles } from "./config";
 import { WpsOAuthService } from "./oauth";
@@ -35,6 +35,21 @@ function createWindow(): BrowserWindow {
   } else {
     win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+
+  win.webContents.on("will-navigate", (event, url) => {
+    const current = win.webContents.getURL();
+    if (url !== current && /^https?:\/\//i.test(url)) {
+      event.preventDefault();
+      void shell.openExternal(url);
+    }
+  });
 
   win.on("close", (e) => {
     if (process.platform === "win32" && !app.isQuiting) {
