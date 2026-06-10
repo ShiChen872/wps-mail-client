@@ -4,9 +4,10 @@ import { looksLikeHtml, normalizeComposeBody, plainTextToHtml } from "../lib/htm
 import { RichTextEditor } from "./RichTextEditor";
 import { CloudDocPickerModal, type CloudDocItem } from "./CloudDocPickerModal";
 
-interface AttachmentItem {
-  path: string;
+interface AddedFileItem {
+  id: string;
   name: string;
+  kind: "embedded" | "cloud";
 }
 
 interface Props {
@@ -15,6 +16,17 @@ interface Props {
   contactSuggestions?: string[];
   onClose: () => void;
   onSent: () => void;
+}
+
+let addedFileSeq = 0;
+
+function nextAddedFileId(): string {
+  addedFileSeq += 1;
+  return `file-${addedFileSeq}`;
+}
+
+function kindLabel(kind: AddedFileItem["kind"]): string {
+  return kind === "embedded" ? "已嵌入" : "云文档链接";
 }
 
 export function ComposeModal({
@@ -34,11 +46,12 @@ export function ComposeModal({
   });
   const [plainBody, setPlainBody] = useState(initial?.body ?? "");
   const [useRichText, setUseRichText] = useState(true);
-  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [addedFiles, setAddedFiles] = useState<AddedFileItem[]>([]);
   const [sending, setSending] = useState(false);
-  const [cloudBusy, setCloudBusy] = useState(false);
+  const [fileBusy, setFileBusy] = useState(false);
   const [showCloudPicker, setShowCloudPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fileStatus, setFileStatus] = useState<string | null>(null);
   const [showBcc, setShowBcc] = useState(Boolean(initial?.bcc));
 
   useEffect(() => {
@@ -54,18 +67,56 @@ export function ComposeModal({
     }
   }, [initial]);
 
-  const handlePickAttachments = async () => {
+  const appendHtmlToBody = (html: string) => {
+    if (!html) return;
+    setUseRichText(true);
+    setBodyHtml((prev) => `${prev}${html}`);
+  };
+
+  const handleAddFiles = async () => {
     const res = await window.wpsMail.pickAttachments();
     if (res.canceled || !res.files.length) return;
-    setAttachments((prev) => {
-      const seen = new Set(prev.map((a) => a.path));
-      const add = res.files.filter((f) => !seen.has(f.path));
-      return [...prev, ...add];
-    });
+
+    setFileBusy(true);
+    setError(null);
+    setFileStatus(null);
+    try {
+      const result = await window.wpsMail.processComposeFiles(
+        res.files.map((f) => f.path)
+      );
+      if (result.files.length > 0) {
+        appendHtmlToBody(result.files.map((f) => f.html).join(""));
+        setAddedFiles((prev) => [
+          ...prev,
+          ...result.files.map((f) => ({
+            id: nextAddedFileId(),
+            name: f.name,
+            kind: f.kind,
+          })),
+        ]);
+      }
+      if (result.summary) {
+        setFileStatus(result.summary);
+      }
+      if (result.errors.length > 0) {
+        const msg = result.errors
+          .map((e) => `${e.name}: ${e.message}`)
+          .join("\n");
+        setError(
+          result.files.length > 0
+            ? `部分文件处理失败：\n${msg}`
+            : `添加文件失败：\n${msg}`
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFileBusy(false);
+    }
   };
 
   const insertCloudLinks = async (picked: CloudDocItem[]) => {
-    setCloudBusy(true);
+    setFileBusy(true);
     setError(null);
     try {
       const result = await window.wpsMail.createCloudLinks(
@@ -77,9 +128,16 @@ export function ComposeModal({
         }))
       );
       if (result.items.length > 0) {
-        setUseRichText(true);
-        const block = result.items.map((i) => i.html).join("");
-        setBodyHtml((prev) => `${prev}${block}`);
+        appendHtmlToBody(result.items.map((i) => i.html).join(""));
+        setAddedFiles((prev) => [
+          ...prev,
+          ...result.items.map((i) => ({
+            id: nextAddedFileId(),
+            name: i.name,
+            kind: "cloud" as const,
+          })),
+        ]);
+        setFileStatus(`已添加 ${result.items.length} 个云文档链接`);
       }
       if (result.errors.length > 0) {
         const msg = result.errors
@@ -87,12 +145,12 @@ export function ComposeModal({
           .join("\n");
         setError(
           result.items.length > 0
-            ? `部分文件未生成云链接：\n${msg}`
-            : `云文档链接失败：\n${msg}\n请确认已开通 kso.drive/file/file_link 权限并重新 OAuth 登录。`
+            ? `部分云文档未生成链接：\n${msg}`
+            : `云文档链接失败：\n${msg}`
         );
       }
     } finally {
-      setCloudBusy(false);
+      setFileBusy(false);
     }
   };
 
@@ -107,7 +165,7 @@ export function ComposeModal({
       const body = useRichText
         ? normalizeComposeBody(bodyHtml, true)
         : normalizeComposeBody(plainBody, false);
-      const res = await window.wpsMail.send({
+      await window.wpsMail.send({
         mailboxId,
         to: to.trim(),
         cc: cc.trim() || undefined,
@@ -115,11 +173,7 @@ export function ComposeModal({
         subject,
         body,
         isHtml: useRichText,
-        attachmentPaths: attachments.map((a) => a.path),
       });
-      if (res.attachmentWarning) {
-        window.alert(res.attachmentWarning);
-      }
       onSent();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -184,40 +238,44 @@ export function ComposeModal({
             </label>
             <button
               type="button"
-              className="btn"
-              onClick={() => void handlePickAttachments()}
-              disabled={sending || cloudBusy}
+              className="btn btn-primary"
+              onClick={() => void handleAddFiles()}
+              disabled={sending || fileBusy}
             >
-              嵌入图片
+              {fileBusy ? "处理中…" : "添加文件"}
             </button>
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn"
               onClick={() => setShowCloudPicker(true)}
-              disabled={sending || cloudBusy}
+              disabled={sending || fileBusy}
             >
-              {cloudBusy ? "处理中…" : "云文档链接"}
+              从云文档选择
             </button>
           </div>
           <p className="compose-hint">
-            <strong>云文档链接</strong>：从 WPS 云文档（最近/文件夹）选择已有文件并插入分享链，类
-            OWA OneDrive。<strong>嵌入图片</strong>：小图（≤2MB）从本机选图嵌入正文。
+            <strong>添加文件</strong> 会自动分流：小图（≤2MB）嵌入正文，其他文件转为云文档链接（开放平台暂无
+            MIME 附件上传）。
           </p>
-          {attachments.length > 0 && (
+          {fileStatus && (
+            <p className="compose-file-status">{fileStatus}</p>
+          )}
+          {addedFiles.length > 0 && (
             <ul className="compose-attachments">
-              {attachments.map((a) => (
-                <li key={a.path}>
+              {addedFiles.map((a) => (
+                <li key={a.id}>
                   <span>{a.name}</span>
+                  <span className={`compose-file-tag compose-file-tag-${a.kind}`}>
+                    {kindLabel(a.kind)}
+                  </span>
                   <button
                     type="button"
                     className="btn-link"
                     onClick={() =>
-                      setAttachments((prev) =>
-                        prev.filter((x) => x.path !== a.path)
-                      )
+                      setAddedFiles((prev) => prev.filter((x) => x.id !== a.id))
                     }
                   >
-                    移除
+                    移除记录
                   </button>
                 </li>
               ))}
@@ -242,7 +300,7 @@ export function ComposeModal({
             type="button"
             className="btn btn-primary"
             onClick={() => void handleSend()}
-            disabled={sending || cloudBusy}
+            disabled={sending || fileBusy}
           >
             {sending ? "发送中…" : "发送"}
           </button>

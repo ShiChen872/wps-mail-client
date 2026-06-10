@@ -4,7 +4,7 @@
 
 ## 功能
 
-**当前版本：1.3.1**（详见 [CHANGELOG.md](CHANGELOG.md)、[docs/V1.3.md](docs/V1.3.md)）
+**当前版本：1.3.2**（详见 [CHANGELOG.md](CHANGELOG.md)、[docs/V1.4.md](docs/V1.4.md)）
 
 - WPS 账号 OAuth 登录（主进程保管 token，支持刷新）
 - 系统文件夹 + **自定义文件夹**侧栏

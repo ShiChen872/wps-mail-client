@@ -12,6 +12,7 @@ import {
   type CloudDocSelection,
 } from "./cloud-attachment-service";
 import { executeQuarantineAction } from "./quarantine-audit-service";
+import { processComposeFiles } from "./compose-file-service";
 import path from "path";
 
 function rowToListItem(row: CachedMessageRow) {
@@ -331,6 +332,18 @@ export function registerIpcHandlers(
       files: filePaths.map((p) => ({ path: p, name: path.basename(p) })),
     };
   });
+
+  ipcMain.handle(
+    "mail:processComposeFiles",
+    async (_e, filePaths: string[]) => {
+      if (!filePaths?.length) {
+        return { files: [], errors: [], summary: "" };
+      }
+      return processComposeFiles(sync, config, filePaths, () =>
+        auth.getAccessToken()
+      );
+    }
+  );
 
   ipcMain.handle(
     "mail:send",

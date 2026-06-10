@@ -44,6 +44,11 @@ export interface WpsMailApi {
     canceled: boolean;
     files: { path: string; name: string }[];
   }>;
+  processComposeFiles: (filePaths: string[]) => Promise<{
+    files: { name: string; kind: "embedded" | "cloud"; html: string }[];
+    errors: { name: string; message: string }[];
+    summary: string;
+  }>;
   getCloudDriveRoot: () => Promise<{
     driveId: string;
     driveName: string;
@@ -172,6 +177,8 @@ const api: WpsMailApi = {
   getMessage: (payload) => ipcRenderer.invoke("mail:getMessage", payload),
   search: (payload) => ipcRenderer.invoke("mail:search", payload),
   pickAttachments: () => ipcRenderer.invoke("mail:pickAttachments"),
+  processComposeFiles: (filePaths) =>
+    ipcRenderer.invoke("mail:processComposeFiles", filePaths),
   getCloudDriveRoot: () => ipcRenderer.invoke("mail:getCloudDriveRoot"),
   listCloudLatest: (payload) =>
     ipcRenderer.invoke("mail:listCloudLatest", payload),
