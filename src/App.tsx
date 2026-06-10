@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComposeDraft } from "./lib/compose";
-import { buildForwardDraft, buildReplyDraft } from "./lib/compose";
+import { buildEditDraftFromMail, buildForwardDraft, buildReplyDraft } from "./lib/compose";
 import type {
   MailDetail,
   MailFolderItem,
@@ -11,6 +11,15 @@ import type {
 import { SYSTEM_FOLDERS } from "./types";
 import { ComposeModal } from "./components/ComposeModal";
 import { MailBodyReader } from "./components/MailBodyReader";
+import { ThreadListItem } from "./components/ThreadListItem";
+import { ShortcutsHelpModal } from "./components/ShortcutsHelpModal";
+import {
+  groupByThread,
+  threadMessagesForItem,
+} from "./lib/threads";
+import { mailboxOptionLabel } from "./lib/mailbox";
+import { useTheme } from "./hooks/useTheme";
+import { useMailShortcuts } from "./hooks/useMailShortcuts";
 
 function formatTime(ts: number): string {
   if (!ts) return "";
@@ -71,6 +80,12 @@ export default function App() {
   const [composeDraft, setComposeDraft] = useState<ComposeDraft | undefined>();
   const [contacts, setContacts] = useState<string[]>([]);
   const [inboxUnread, setInboxUnread] = useState(0);
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const { themeLabel, cycleTheme } = useTheme();
 
   const activeFolderId = searchMode ? "" : folderId;
 
@@ -78,6 +93,23 @@ export default function App() {
     () => messages.find((m) => m.message_id === selectedId) ?? null,
     [messages, selectedId]
   );
+
+  const threadGroups = useMemo(
+    () => (searchMode ? null : groupByThread(messages)),
+    [messages, searchMode]
+  );
+
+  const selectedThreadMessages = useMemo(() => {
+    if (!selected || searchMode) return [];
+    return threadMessagesForItem(messages, selected);
+  }, [selected, messages, searchMode]);
+
+  const selectedThreadIndex = useMemo(() => {
+    if (!selectedId || !selectedThreadMessages.length) return -1;
+    return selectedThreadMessages.findIndex(
+      (m) => m.message_id === selectedId
+    );
+  }, [selectedId, selectedThreadMessages]);
 
   const refreshAuth = useCallback(async () => {
     const cfg = await window.wpsMail.getConfig();
@@ -245,8 +277,22 @@ export default function App() {
   useEffect(() => {
     if (!loggedIn || !mailboxId) return;
     setNextPageToken(null);
+    setExpandedThreads(new Set());
     void loadMessages({ refresh: !searchMode });
   }, [folderId, mailboxId, loggedIn, searchMode]);
+
+  useEffect(() => {
+    if (!selected?.thread_id || !threadGroups) return;
+    const key = selected.thread_id.trim();
+    const group = threadGroups.find((g) => g.threadKey === key);
+    if (!group || group.items.length <= 1) return;
+    setExpandedThreads((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  }, [selected?.message_id, selected?.thread_id, threadGroups]);
 
   useEffect(() => {
     const unsub = window.wpsMail.onUnreadChanged((count) => {
@@ -294,6 +340,15 @@ export default function App() {
     setSearchFrom("");
     setSearchBody("");
     setNextPageToken(null);
+  };
+
+  const toggleThreadExpand = (threadKey: string) => {
+    setExpandedThreads((prev) => {
+      const next = new Set(prev);
+      if (next.has(threadKey)) next.delete(threadKey);
+      else next.add(threadKey);
+      return next;
+    });
   };
 
   const openCompose = (draft?: ComposeDraft) => {
@@ -390,6 +445,66 @@ export default function App() {
     );
   };
 
+  useMailShortcuts(
+    {
+      enabled: loggedIn && !shortcutsOpen,
+      onNewMail: () => {
+        if (!composeOpen) openCompose();
+      },
+      onReply: () => {
+        if (detail && !composeOpen) {
+          openCompose(buildReplyDraft(detail, false));
+        }
+      },
+      onReplyAll: () => {
+        if (detail && !composeOpen) {
+          openCompose(buildReplyDraft(detail, true));
+        }
+      },
+      onForward: () => {
+        if (detail && !composeOpen) {
+          openCompose(buildForwardDraft(detail));
+        }
+      },
+      onDelete: () => {
+        if (selected && !composeOpen) handleDelete();
+      },
+      onMarkUnread: () => {
+        if (selected && !composeOpen && selected.is_read) {
+          handleToggleRead(false);
+        }
+      },
+      onFocusSearch: () => {
+        searchInputRef.current?.focus();
+      },
+      onEscape: () => {
+        if (composeOpen) {
+          setComposeOpen(false);
+          setComposeDraft(undefined);
+          return;
+        }
+        if (shortcutsOpen) {
+          setShortcutsOpen(false);
+          return;
+        }
+        if (advancedSearch) {
+          setAdvancedSearch(false);
+          return;
+        }
+        if (searchMode) clearSearch();
+      },
+    },
+    [
+      loggedIn,
+      shortcutsOpen,
+      composeOpen,
+      detail,
+      selected,
+      advancedSearch,
+      searchMode,
+    ]
+  );
+
   const folderBadge = (id: string) => {
     const n = folderUnread[id];
     return n > 0 ? ` (${n})` : "";
@@ -451,11 +566,26 @@ export default function App() {
           >
             {mailboxes.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.email_address}
+                {mailboxOptionLabel(m)}
               </option>
             ))}
           </select>
         )}
+        <button
+          type="button"
+          className="btn"
+          onClick={cycleTheme}
+          title="切换浅色 / 深色 / 跟随系统"
+        >
+          {themeLabel}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => setShortcutsOpen(true)}
+        >
+          快捷键
+        </button>
         <button
           type="button"
           className="btn btn-primary"
@@ -528,11 +658,21 @@ export default function App() {
               ))}
             </>
           )}
+          <div className="sidebar-footer">
+            <button
+              type="button"
+              className="btn-link sidebar-help"
+              onClick={() => setShortcutsOpen(true)}
+            >
+              键盘快捷键
+            </button>
+          </div>
         </nav>
 
         <section className="mail-list">
           <div className="list-toolbar">
             <input
+              ref={searchInputRef}
               placeholder="关键字搜索…"
               value={searchQ}
               onChange={(e) => setSearchQ(e.target.value)}
@@ -580,27 +720,43 @@ export default function App() {
             {!loading && messages.length === 0 && (
               <p style={{ padding: 16, color: "var(--muted)" }}>暂无邮件</p>
             )}
-            {messages.map((m) => (
-              <div
-                key={m.message_id}
-                role="button"
-                tabIndex={0}
-                className={`mail-row ${!m.is_read ? "unread" : ""} ${selectedId === m.message_id ? "selected" : ""}`}
-                onClick={() => void loadDetail(m)}
-                onKeyDown={(e) => e.key === "Enter" && void loadDetail(m)}
-              >
-                <div className="subject">{m.subject || "(无主题)"}</div>
-                <div className="meta">
-                  <span>
-                    {listRowPeerLabel(
-                      m,
-                      searchMode ? m.folder_id : folderId
-                    )}
-                  </span>
-                  <span>{formatTime(m.ctime)}</span>
-                </div>
-              </div>
-            ))}
+            {threadGroups
+              ? threadGroups.map((group) => (
+                  <ThreadListItem
+                    key={group.threadKey}
+                    group={group}
+                    folderId={folderId}
+                    selectedId={selectedId}
+                    expanded={expandedThreads.has(group.threadKey)}
+                    formatTime={formatTime}
+                    peerLabel={listRowPeerLabel}
+                    onToggleExpand={toggleThreadExpand}
+                    onSelect={(m) => void loadDetail(m)}
+                  />
+                ))
+              : messages.map((m) => (
+                  <div
+                    key={m.message_id}
+                    role="button"
+                    tabIndex={0}
+                    className={`mail-row ${!m.is_read ? "unread" : ""} ${selectedId === m.message_id ? "selected" : ""}`}
+                    onClick={() => void loadDetail(m)}
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && void loadDetail(m)
+                    }
+                  >
+                    <div className="subject">{m.subject || "(无主题)"}</div>
+                    <div className="meta">
+                      <span>
+                        {listRowPeerLabel(
+                          m,
+                          searchMode ? m.folder_id : folderId
+                        )}
+                      </span>
+                      <span>{formatTime(m.ctime)}</span>
+                    </div>
+                  </div>
+                ))}
             {nextPageToken && (
               <div className="list-footer">
                 <button
@@ -653,6 +809,15 @@ export default function App() {
                 >
                   转发
                 </button>
+                {folderId === "drafts" && detail && (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => openCompose(buildEditDraftFromMail(detail))}
+                  >
+                    继续编辑
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn"
@@ -689,6 +854,50 @@ export default function App() {
               </div>
               <header className="reader-header">
                 <h2>{detail?.subject || selected.subject || "(无主题)"}</h2>
+                {selectedThreadMessages.length > 1 && (
+                  <div className="thread-nav">
+                    <span className="thread-nav-label">
+                      此会话共{" "}
+                      {detail?.thread_message_count ??
+                        selectedThreadMessages.length}{" "}
+                      封
+                    </span>
+                    <div className="thread-nav-actions">
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={selectedThreadIndex <= 0}
+                        onClick={() => {
+                          const prev =
+                            selectedThreadMessages[selectedThreadIndex - 1];
+                          if (prev) void loadDetail(prev);
+                        }}
+                      >
+                        上一封
+                      </button>
+                      <span className="thread-nav-pos">
+                        {selectedThreadIndex + 1} /{" "}
+                        {selectedThreadMessages.length}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={
+                          selectedThreadIndex < 0 ||
+                          selectedThreadIndex >=
+                            selectedThreadMessages.length - 1
+                        }
+                        onClick={() => {
+                          const next =
+                            selectedThreadMessages[selectedThreadIndex + 1];
+                          if (next) void loadDetail(next);
+                        }}
+                      >
+                        下一封
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="reader-meta">
                   <div>发件人：{senderLabel(detail ?? selected)}</div>
                   <div>
@@ -751,6 +960,8 @@ export default function App() {
       {composeOpen && mailboxId && (
         <ComposeModal
           mailboxId={mailboxId}
+          mailboxes={mailboxes}
+          defaultSendMailboxId={mailboxId}
           initial={composeDraft}
           contactSuggestions={contacts}
           onClose={() => {
@@ -764,7 +975,19 @@ export default function App() {
             clearSearch();
             void loadMessages({ refresh: true });
           }}
+          onSaved={() => {
+            setComposeOpen(false);
+            setComposeDraft(undefined);
+            setFolderId("drafts");
+            clearSearch();
+            setDetail(null);
+            setSelectedId(null);
+            void loadMessages({ refresh: true });
+          }}
         />
+      )}
+      {shortcutsOpen && (
+        <ShortcutsHelpModal onClose={() => setShortcutsOpen(false)} />
       )}
     </div>
   );

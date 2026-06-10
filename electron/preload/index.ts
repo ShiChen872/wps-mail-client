@@ -128,6 +128,16 @@ export interface WpsMailApi {
     message_id: string;
     attachmentWarning?: string;
   }>;
+  saveDraft: (payload: {
+    mailboxId: string;
+    subject: string;
+    body: string;
+    isHtml?: boolean;
+    to: string;
+    cc?: string;
+    bcc?: string;
+    existingDraftMessageId?: string;
+  }) => Promise<{ ok: boolean; message_id: string }>;
   updateMessage: (payload: {
     mailboxId: string;
     folderId: string;
@@ -190,6 +200,7 @@ const api: WpsMailApi = {
     ipcRenderer.invoke("mail:createCloudLinks", selections),
   openCloudDoc: () => ipcRenderer.invoke("mail:openCloudDoc"),
   send: (payload) => ipcRenderer.invoke("mail:send", payload),
+  saveDraft: (payload) => ipcRenderer.invoke("mail:saveDraft", payload),
   updateMessage: (payload) =>
     ipcRenderer.invoke("mail:updateMessage", payload),
   deleteMessage: (payload) =>

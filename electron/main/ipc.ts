@@ -4,7 +4,6 @@ import type { MailDatabase, CachedMessageRow } from "./db";
 import type { SyncService } from "./sync-service";
 import type { AppConfig } from "./config";
 import { isConfigValid } from "./config";
-import type { CreateDraftBody, MailRecipient } from "@wps-mail/mail-api";
 import { embedImagesInHtmlBody } from "./attachment-embed";
 import { uploadAttachmentsForMessage } from "./attachment-upload";
 import {
@@ -13,6 +12,7 @@ import {
 } from "./cloud-attachment-service";
 import { executeQuarantineAction } from "./quarantine-audit-service";
 import { processComposeFiles } from "./compose-file-service";
+import { buildCreateDraftBody } from "./compose-draft";
 import path from "path";
 
 function rowToListItem(row: CachedMessageRow) {
@@ -360,13 +360,6 @@ export function registerIpcHandlers(
         attachmentPaths?: string[];
       }
     ) => {
-      const parseRecipients = (raw: string): MailRecipient[] =>
-        raw
-          .split(/[,;]/)
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .map((email_address) => ({ email_address, name: email_address }));
-
       let body = payload.body;
       let isHtml = Boolean(payload.isHtml);
       const allPaths = payload.attachmentPaths ?? [];
@@ -392,14 +385,11 @@ export function registerIpcHandlers(
           : `${body}\n\n--\n${sig}`;
       }
 
-      const bodyReq: CreateDraftBody = {
-        subject: payload.subject,
+      const bodyReq = buildCreateDraftBody({
+        ...payload,
         body,
-        body_version: isHtml ? "v2" : "v1",
-        to_recipients: parseRecipients(payload.to),
-        cc_recipients: payload.cc ? parseRecipients(payload.cc) : undefined,
-        bcc_recipients: payload.bcc ? parseRecipients(payload.bcc) : undefined,
-      };
+        isHtml,
+      });
 
       const { message_id } = await sync.api.createDraft(
         payload.mailboxId,
@@ -434,6 +424,47 @@ export function registerIpcHandlers(
         attachmentWarning = notes.join("\n");
       }
       return { ok: true, message_id, attachmentWarning };
+    }
+  );
+
+  ipcMain.handle(
+    "mail:saveDraft",
+    async (
+      _e,
+      payload: {
+        mailboxId: string;
+        subject: string;
+        body: string;
+        isHtml?: boolean;
+        to: string;
+        cc?: string;
+        bcc?: string;
+        existingDraftMessageId?: string;
+      }
+    ) => {
+      const bodyReq = buildCreateDraftBody(payload);
+      const { message_id } = await sync.api.createDraft(
+        payload.mailboxId,
+        bodyReq
+      );
+
+      if (payload.existingDraftMessageId) {
+        try {
+          await sync.api.deleteMessage(
+            payload.mailboxId,
+            "drafts",
+            payload.existingDraftMessageId
+          );
+          db.removeMessage(
+            payload.mailboxId,
+            payload.existingDraftMessageId
+          );
+        } catch {
+          /* 新草稿已保存，旧草稿删除失败可忽略 */
+        }
+      }
+
+      return { ok: true, message_id };
     }
   );
 

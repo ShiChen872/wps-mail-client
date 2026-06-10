@@ -21,6 +21,7 @@ export interface MailListItem {
   has_attachments: boolean;
   thread_id?: string;
   sender?: string;
+  thread_message_count?: number;
 }
 
 export interface MailDetail extends MailListItem {

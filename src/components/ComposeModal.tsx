@@ -3,6 +3,8 @@ import type { ComposeDraft } from "../lib/compose";
 import { looksLikeHtml, normalizeComposeBody, plainTextToHtml } from "../lib/html";
 import { RichTextEditor } from "./RichTextEditor";
 import { CloudDocPickerModal, type CloudDocItem } from "./CloudDocPickerModal";
+import type { Mailbox } from "../types";
+import { mailboxOptionLabel } from "../lib/mailbox";
 
 interface AddedFileItem {
   id: string;
@@ -12,10 +14,13 @@ interface AddedFileItem {
 
 interface Props {
   mailboxId: string;
+  mailboxes?: Mailbox[];
+  defaultSendMailboxId?: string;
   initial?: ComposeDraft;
   contactSuggestions?: string[];
   onClose: () => void;
   onSent: () => void;
+  onSaved?: () => void;
 }
 
 let addedFileSeq = 0;
@@ -31,11 +36,17 @@ function kindLabel(kind: AddedFileItem["kind"]): string {
 
 export function ComposeModal({
   mailboxId,
+  mailboxes = [],
+  defaultSendMailboxId,
   initial,
   contactSuggestions = [],
   onClose,
   onSent,
+  onSaved,
 }: Props) {
+  const [sendMailboxId, setSendMailboxId] = useState(
+    defaultSendMailboxId ?? mailboxId
+  );
   const [to, setTo] = useState(initial?.to ?? "");
   const [cc, setCc] = useState(initial?.cc ?? "");
   const [bcc, setBcc] = useState(initial?.bcc ?? "");
@@ -48,11 +59,16 @@ export function ComposeModal({
   const [useRichText, setUseRichText] = useState(true);
   const [addedFiles, setAddedFiles] = useState<AddedFileItem[]>([]);
   const [sending, setSending] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
   const [showCloudPicker, setShowCloudPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileStatus, setFileStatus] = useState<string | null>(null);
   const [showBcc, setShowBcc] = useState(Boolean(initial?.bcc));
+
+  useEffect(() => {
+    setSendMailboxId(defaultSendMailboxId ?? mailboxId);
+  }, [defaultSendMailboxId, mailboxId, initial]);
 
   useEffect(() => {
     if (initial) {
@@ -154,6 +170,31 @@ export function ComposeModal({
     }
   };
 
+  const handleSaveDraft = async () => {
+    setSavingDraft(true);
+    setError(null);
+    try {
+      const body = useRichText
+        ? normalizeComposeBody(bodyHtml, true)
+        : normalizeComposeBody(plainBody, false);
+      await window.wpsMail.saveDraft({
+        mailboxId: sendMailboxId,
+        to: to.trim(),
+        cc: cc.trim() || undefined,
+        bcc: bcc.trim() || undefined,
+        subject,
+        body,
+        isHtml: useRichText,
+        existingDraftMessageId: initial?.draftMessageId,
+      });
+      onSaved?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
   const handleSend = async () => {
     if (!to.trim()) {
       setError("请填写收件人");
@@ -166,7 +207,7 @@ export function ComposeModal({
         ? normalizeComposeBody(bodyHtml, true)
         : normalizeComposeBody(plainBody, false);
       await window.wpsMail.send({
-        mailboxId,
+        mailboxId: sendMailboxId,
         to: to.trim(),
         cc: cc.trim() || undefined,
         bcc: bcc.trim() || undefined,
@@ -182,11 +223,29 @@ export function ComposeModal({
     }
   };
 
+  const busy = sending || savingDraft || fileBusy;
+
   return (
     <div className="compose-overlay" role="dialog" aria-modal="true">
       <div className="compose-panel compose-panel-wide">
         <header>{initial?.title ?? "新邮件"}</header>
         <div className="compose-fields">
+          {mailboxes.length > 1 && (
+            <label className="compose-from-row">
+              <span className="compose-from-label">发件身份</span>
+              <select
+                value={sendMailboxId}
+                onChange={(e) => setSendMailboxId(e.target.value)}
+                disabled={busy}
+              >
+                {mailboxes.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {mailboxOptionLabel(m)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <input
             placeholder="收件人（多个用逗号分隔）"
             value={to}
@@ -240,7 +299,7 @@ export function ComposeModal({
               type="button"
               className="btn btn-primary"
               onClick={() => void handleAddFiles()}
-              disabled={sending || fileBusy}
+              disabled={busy}
             >
               {fileBusy ? "处理中…" : "添加文件"}
             </button>
@@ -248,7 +307,7 @@ export function ComposeModal({
               type="button"
               className="btn"
               onClick={() => setShowCloudPicker(true)}
-              disabled={sending || fileBusy}
+              disabled={busy}
             >
               从云文档选择
             </button>
@@ -293,14 +352,22 @@ export function ComposeModal({
           {error && <p style={{ color: "#cf1322", margin: 0 }}>{error}</p>}
         </div>
         <div className="compose-actions">
-          <button type="button" className="btn" onClick={onClose} disabled={sending}>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
             取消
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void handleSaveDraft()}
+            disabled={busy}
+          >
+            {savingDraft ? "保存中…" : "保存草稿"}
           </button>
           <button
             type="button"
             className="btn btn-primary"
             onClick={() => void handleSend()}
-            disabled={sending || fileBusy}
+            disabled={busy}
           >
             {sending ? "发送中…" : "发送"}
           </button>

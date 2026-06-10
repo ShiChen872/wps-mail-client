@@ -26,6 +26,8 @@ export interface ComposeDraft {
   bcc: string;
   subject: string;
   body: string;
+  /** 编辑已有草稿时携带，保存后会删除旧草稿 */
+  draftMessageId?: string;
 }
 
 export function buildReplyDraft(
@@ -64,5 +66,17 @@ export function buildForwardDraft(detail: MailDetail): ComposeDraft {
     bcc: "",
     subject: subj,
     body: quoteBody(detail),
+  };
+}
+
+export function buildEditDraftFromMail(detail: MailDetail): ComposeDraft {
+  return {
+    title: "编辑草稿",
+    to: emailsFromRecipients(detail.to_recipient),
+    cc: emailsFromRecipients(detail.cc_recipient),
+    bcc: emailsFromRecipients(detail.bcc_recipient),
+    subject: detail.subject ?? "",
+    body: detail.body ?? detail.body_preview ?? "",
+    draftMessageId: detail.message_id,
   };
 }
