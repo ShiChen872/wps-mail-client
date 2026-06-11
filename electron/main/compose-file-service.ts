@@ -70,7 +70,7 @@ export async function processComposeFiles(
   const cloudN = files.filter((f) => f.kind === "cloud").length;
   const parts: string[] = [];
   if (embeddedN > 0) parts.push(`${embeddedN} 张图片已嵌入正文`);
-  if (cloudN > 0) parts.push(`${cloudN} 个文件已转为云文档链接`);
+  if (cloudN > 0) parts.push(`${cloudN} 个文档已转为云文档链接`);
   if (errors.length > 0) parts.push(`${errors.length} 个失败`);
 
   return {

@@ -5,11 +5,18 @@ import { RichTextEditor } from "./RichTextEditor";
 import { CloudDocPickerModal, type CloudDocItem } from "./CloudDocPickerModal";
 import type { Mailbox } from "../types";
 import { mailboxOptionLabel } from "../lib/mailbox";
+import {
+  composeFileStatusSummary,
+  removeComposeFileFromBody,
+  wrapComposeFileBlock,
+} from "../lib/compose-files";
 
 interface AddedFileItem {
   id: string;
   name: string;
   kind: "embedded" | "cloud";
+  /** 包裹后的正文 HTML 块，移除时同步删除 */
+  blockHtml: string;
 }
 
 interface Props {
@@ -31,7 +38,7 @@ function nextAddedFileId(): string {
 }
 
 function kindLabel(kind: AddedFileItem["kind"]): string {
-  return kind === "embedded" ? "已嵌入" : "云文档链接";
+  return kind === "embedded" ? "嵌入图片" : "云文档链接";
 }
 
 export function ComposeModal({
@@ -83,10 +90,32 @@ export function ComposeModal({
     }
   }, [initial]);
 
-  const appendHtmlToBody = (html: string) => {
-    if (!html) return;
+  const registerAddedFiles = (
+    items: { name: string; kind: AddedFileItem["kind"]; html: string }[]
+  ) => {
+    if (!items.length) return;
+    const newItems = items.map((f) => {
+      const id = nextAddedFileId();
+      return {
+        id,
+        name: f.name,
+        kind: f.kind,
+        blockHtml: wrapComposeFileBlock(id, f.html),
+      };
+    });
     setUseRichText(true);
-    setBodyHtml((prev) => `${prev}${html}`);
+    setBodyHtml((prev) => prev + newItems.map((i) => i.blockHtml).join(""));
+    setAddedFiles((prev) => [...prev, ...newItems]);
+  };
+
+  const removeAddedFile = (id: string) => {
+    setAddedFiles((prev) => {
+      if (!prev.some((f) => f.id === id)) return prev;
+      setBodyHtml((body) => removeComposeFileFromBody(body, id));
+      const next = prev.filter((f) => f.id !== id);
+      if (next.length === 0) setFileStatus(null);
+      return next;
+    });
   };
 
   const handleAddFiles = async () => {
@@ -101,18 +130,16 @@ export function ComposeModal({
         res.files.map((f) => f.path)
       );
       if (result.files.length > 0) {
-        appendHtmlToBody(result.files.map((f) => f.html).join(""));
-        setAddedFiles((prev) => [
-          ...prev,
-          ...result.files.map((f) => ({
-            id: nextAddedFileId(),
-            name: f.name,
-            kind: f.kind,
-          })),
-        ]);
+        registerAddedFiles(result.files);
       }
-      if (result.summary) {
-        setFileStatus(result.summary);
+      if (result.files.length > 0 || result.errors.length > 0) {
+        setFileStatus(
+          composeFileStatusSummary(
+            result.files.filter((f) => f.kind === "embedded").length,
+            result.files.filter((f) => f.kind === "cloud").length,
+            result.errors.length
+          )
+        );
       }
       if (result.errors.length > 0) {
         const msg = result.errors
@@ -144,16 +171,16 @@ export function ComposeModal({
         }))
       );
       if (result.items.length > 0) {
-        appendHtmlToBody(result.items.map((i) => i.html).join(""));
-        setAddedFiles((prev) => [
-          ...prev,
-          ...result.items.map((i) => ({
-            id: nextAddedFileId(),
+        registerAddedFiles(
+          result.items.map((i) => ({
             name: i.name,
             kind: "cloud" as const,
-          })),
-        ]);
-        setFileStatus(`已添加 ${result.items.length} 个云文档链接`);
+            html: i.html,
+          }))
+        );
+        setFileStatus(
+          composeFileStatusSummary(0, result.items.length, result.errors.length)
+        );
       }
       if (result.errors.length > 0) {
         const msg = result.errors
@@ -313,8 +340,8 @@ export function ComposeModal({
             </button>
           </div>
           <p className="compose-hint">
-            <strong>添加文件</strong> 会自动分流：小图（≤2MB）嵌入正文，其他文件转为云文档链接（开放平台暂无
-            MIME 附件上传）。
+            <strong>添加文件</strong>：图片（≤2MB）嵌入正文；PDF、Word 等文档自动上传云盘并插入链接。
+            <strong>从云文档选择</strong>：插入已有云文档分享链。
           </p>
           {fileStatus && (
             <p className="compose-file-status">{fileStatus}</p>
@@ -330,11 +357,9 @@ export function ComposeModal({
                   <button
                     type="button"
                     className="btn-link"
-                    onClick={() =>
-                      setAddedFiles((prev) => prev.filter((x) => x.id !== a.id))
-                    }
+                    onClick={() => removeAddedFile(a.id)}
                   >
-                    移除记录
+                    移除
                   </button>
                 </li>
               ))}

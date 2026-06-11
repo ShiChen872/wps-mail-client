@@ -43,7 +43,7 @@ export function imageEmbedHtmlBlock(filePath: string): string | null {
   const b64 = data.toString("base64");
   const mime = mimeForExt(ext);
   return (
-    `<p style="margin:12px 0 4px;color:#666;font-size:12px;">${name}</p>` +
+    `<p style="margin:12px 0 4px;color:#666;font-size:12px;">嵌入图片：${name.replace(/</g, "&lt;")}</p>` +
     `<p><img src="data:${mime};base64,${b64}" alt="${name.replace(/"/g, "&quot;")}" style="max-width:100%;height:auto;" /></p>`
   );
 }
