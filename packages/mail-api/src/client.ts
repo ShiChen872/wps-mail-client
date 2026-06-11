@@ -99,6 +99,34 @@ export class WpsMailApiClient {
     return res.data;
   }
 
+  /** 分页拉取全部目录（含子文件夹） */
+  async listAllFolders(mailboxId: string): Promise<MailFolder[]> {
+    const all: MailFolder[] = [];
+    let pageToken: string | undefined;
+    do {
+      const page = await this.listFolders(mailboxId, 50, pageToken);
+      if (page.items?.length) all.push(...page.items);
+      pageToken = page.next_page_token?.trim() || undefined;
+    } while (pageToken);
+    return all;
+  }
+
+  async listSubFolders(
+    mailboxId: string,
+    folderId: string,
+    pageSize = 50,
+    pageToken?: string
+  ) {
+    const q = new URLSearchParams();
+    if (pageSize) q.set("page_size", String(pageSize));
+    if (pageToken) q.set("page_token", pageToken);
+    const suffix = q.toString() ? `?${q}` : "";
+    const res = await this.request<Paginated<MailFolder>>(
+      `/v7/mailboxes/${encodeURIComponent(mailboxId)}/folders/${encodeURIComponent(folderId)}/children${suffix}`
+    );
+    return res.data;
+  }
+
   async listFolderMessages(
     mailboxId: string,
     folderId: string,

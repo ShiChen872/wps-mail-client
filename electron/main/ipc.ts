@@ -92,8 +92,7 @@ export function registerIpcHandlers(
 
   ipcMain.handle("mail:listFolders", async (_e, mailboxId: string) => {
     try {
-      const data = await sync.api.listFolders(mailboxId);
-      const items = data.items ?? [];
+      const items = await sync.api.listAllFolders(mailboxId);
       for (const f of items) {
         if (f.folder_type === "user_folder" && f.unread_message_count == null) {
           f.unread_message_count = db.countUnreadFolder(

@@ -13,13 +13,19 @@ import { ComposeModal } from "./components/ComposeModal";
 import { MailBodyReader } from "./components/MailBodyReader";
 import { ThreadListItem } from "./components/ThreadListItem";
 import { ShortcutsHelpModal } from "./components/ShortcutsHelpModal";
+import { FolderTreeNav } from "./components/FolderTreeNav";
+import {
+  buildFolderTree,
+  flattenFolderTreeForSelect,
+  folderAncestorIds,
+} from "./lib/folder-tree";
+import { mailboxOptionLabel } from "./lib/mailbox";
+import { useTheme } from "./hooks/useTheme";
+import { useMailShortcuts } from "./hooks/useMailShortcuts";
 import {
   groupByThread,
   threadMessagesForItem,
 } from "./lib/threads";
-import { mailboxOptionLabel } from "./lib/mailbox";
-import { useTheme } from "./hooks/useTheme";
-import { useMailShortcuts } from "./hooks/useMailShortcuts";
 
 function formatTime(ts: number): string {
   if (!ts) return "";
@@ -64,7 +70,10 @@ export default function App() {
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [mailboxId, setMailboxId] = useState("");
   const [folderId, setFolderId] = useState("inbox");
-  const [customFolders, setCustomFolders] = useState<MailFolderItem[]>([]);
+  const [allFolders, setAllFolders] = useState<MailFolderItem[]>([]);
+  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [folderUnread, setFolderUnread] = useState<Record<string, number>>({});
   const [messages, setMessages] = useState<MailListItem[]>([]);
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
@@ -88,6 +97,16 @@ export default function App() {
   const { themeLabel, cycleTheme } = useTheme();
 
   const activeFolderId = searchMode ? "" : folderId;
+
+  const folderTree = useMemo(
+    () => buildFolderTree(allFolders),
+    [allFolders]
+  );
+
+  const customMoveOptions = useMemo(
+    () => flattenFolderTreeForSelect(folderTree),
+    [folderTree]
+  );
 
   const selected = useMemo(
     () => messages.find((m) => m.message_id === selectedId) ?? null,
@@ -133,8 +152,7 @@ export default function App() {
 
   const loadFolders = useCallback(async (mbId: string) => {
     const items = (await window.wpsMail.listFolders(mbId)) as MailFolderItem[];
-    const custom = items.filter((f) => f.folder_type === "user_folder");
-    setCustomFolders(custom);
+    setAllFolders(items);
     const unread: Record<string, number> = { inbox: 0 };
     for (const f of SYSTEM_FOLDERS) {
       unread[f.id] = 0;
@@ -280,6 +298,37 @@ export default function App() {
     setExpandedThreads(new Set());
     void loadMessages({ refresh: !searchMode });
   }, [folderId, mailboxId, loggedIn, searchMode]);
+
+  useEffect(() => {
+    if (SYSTEM_FOLDERS.some((f) => f.id === folderId)) return;
+    const ancestors = folderAncestorIds(allFolders, folderId);
+    if (!ancestors.length) return;
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const id of ancestors) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [folderId, allFolders]);
+
+  const toggleFolderExpand = (id: string) => {
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectFolder = (id: string) => {
+    clearSearch();
+    setFolderId(id);
+  };
 
   useEffect(() => {
     if (!selected?.thread_id || !threadGroups) return;
@@ -635,29 +684,26 @@ export default function App() {
                 : folderBadge(f.id)}
             </button>
           ))}
-          {customFolders.length > 0 && (
-            <>
-              <div className="sidebar-section">自定义文件夹</div>
-              {customFolders.map((f) => (
-                <button
-                  key={f.folder_id}
-                  type="button"
-                  className={
-                    activeFolderId === f.folder_id && !searchMode
-                      ? "active"
-                      : ""
-                  }
-                  onClick={() => {
-                    clearSearch();
-                    setFolderId(f.folder_id);
-                  }}
-                >
-                  {f.name}
-                  {folderBadge(f.folder_id)}
-                </button>
-              ))}
-            </>
-          )}
+          <div className="sidebar-section sidebar-section-row">
+            <span>自定义文件夹</span>
+            <button
+              type="button"
+              className="btn-link sidebar-manage-folders"
+              onClick={() => void window.wpsMail.openWebMail()}
+            >
+              在 Web 管理
+            </button>
+          </div>
+          <FolderTreeNav
+            nodes={folderTree}
+            allFolders={allFolders}
+            activeFolderId={activeFolderId}
+            searchMode={searchMode}
+            expandedIds={expandedFolderIds}
+            folderBadge={folderBadge}
+            onToggleExpand={toggleFolderExpand}
+            onSelect={selectFolder}
+          />
           <div className="sidebar-footer">
             <button
               type="button"
@@ -845,11 +891,15 @@ export default function App() {
                       {f.name}
                     </option>
                   ))}
-                  {customFolders.map((f) => (
-                    <option key={f.folder_id} value={f.folder_id}>
-                      {f.name}
-                    </option>
-                  ))}
+                  {customMoveOptions
+                    .filter((o) => o.folderId !== folderId)
+                    .map((o) => (
+                      <option key={o.folderId} value={o.folderId}>
+                        {o.depth > 0
+                          ? `${"　".repeat(o.depth)}└ ${o.label}`
+                          : o.label}
+                      </option>
+                    ))}
                 </select>
               </div>
               <header className="reader-header">
